@@ -284,7 +284,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
             <div id="performanceChartContainer" style="margin-top:2.5rem;">
                 <h3 style="margin-bottom:1rem;"><i class="fas fa-chart-line"></i> Performance Growth Chart</h3>
-                <canvas id="performanceChart" width="600" height="260"></canvas>
+                <div style="height: 300px; width: 100%; max-width: 600px;">
+                    <canvas id="performanceChart"></canvas>
+                </div>
             </div>
         `;
 
@@ -322,118 +324,202 @@ document.addEventListener('DOMContentLoaded', function() {
         return 'Stable';
     }
 
-    // Defensive: Render a line chart showing hyperbolic-like growth using per-task scores as pseudo-weeks
+    // Render a hyperbolic growth chart showing all task modules together
     function renderPerformanceGrowthChart(performanceData) {
         const ctx = document.getElementById('performanceChart');
-        if (!ctx) return;
-
-        // Get all scores, sorted as if by week (simulate growth)
-        let scores = performanceData && typeof performanceData === 'object'
-            ? Object.values(performanceData).filter(score => typeof score === 'number' && !isNaN(score))
-            : [];
-
-        // Defensive: Always plot at least two points
-        if (!scores.length) {
-            scores = [0, 0];
-        } else if (scores.length === 1) {
-            scores = [scores[0], scores[0]];
+        if (!ctx) {
+            console.error('Performance chart canvas not found');
+            return;
         }
 
-        // If all scores are zero, use a demo growth curve for display
-        const allZero = scores.every(v => v === 0);
-        let blendedScores;
-        if (allZero) {
-            blendedScores = [10, 20, 35, 55, 75, 90];
-        } else {
-            // Simulate a hyperbolic growth: sort, then apply a curve
-            scores = scores.sort((a, b) => a - b);
-            const n = scores.length;
-            const max = Math.max(...scores);
-            const hyperbolicScores = scores.map((s, i) => n > 1 ? (max * (i / (i + 2))) : s);
-            blendedScores = scores.map((s, i) => Math.round((s + hyperbolicScores[i]) / 2));
+        // Check if Chart.js is available
+        if (typeof Chart === 'undefined') {
+            console.error('Chart.js library not loaded');
+            const container = document.getElementById('performanceChartContainer');
+            if (container) {
+                container.innerHTML = `
+                    <h3 style="margin-bottom:1rem;"><i class="fas fa-chart-line"></i> All Modules Growth Chart</h3>
+                    <div class="error-message" style="padding: 2rem; text-align: center; background: #f8f9fa; border-radius: 8px;">
+                        <i class="fas fa-exclamation-triangle" style="color: #f59e0b; margin-right: 0.5rem;"></i>
+                        Chart library is loading. Please refresh the page if this message persists.
+                    </div>
+                `;
+            }
+            return;
         }
 
-        // X-axis: Week 1, Week 2, ...
-        const labels = blendedScores.map((_, i) => `Week ${i + 1}`);
+        try {
+            // Define all task modules we want to display
+            const taskModules = ['Spreadsheet', 'SQL', 'Power BI', 'Python', 'EDA', 'ML'];
+            
+            // Colors for each module (different colors for visual distinction)
+            const moduleColors = {
+                'Spreadsheet': { border: '#10b981', bg: 'rgba(16,185,129,0.1)' },
+                'SQL': { border: '#3b82f6', bg: 'rgba(59,130,246,0.1)' },
+                'Power BI': { border: '#f59e0b', bg: 'rgba(245,158,11,0.1)' },
+                'Python': { border: '#ef4444', bg: 'rgba(239,68,68,0.1)' },
+                'EDA': { border: '#8b5cf6', bg: 'rgba(139,92,246,0.1)' },
+                'ML': { border: '#06b6d4', bg: 'rgba(6,182,212,0.1)' }
+            };
 
-        // Destroy existing chart if it exists
-        if (window.performanceChart) {
-            window.performanceChart.destroy();
-        }
+            // Create datasets for each module with hyperbolic growth curves
+            const datasets = [];
+            const timePoints = 8; // Number of time points to show progression
+            const labels = Array.from({length: timePoints}, (_, i) => `Stage ${i + 1}`);
 
-        window.performanceChart = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: labels,
-                datasets: [{
-                    label: 'Performance Growth',
-                    data: blendedScores,
+            taskModules.forEach(module => {
+                const actualScore = performanceData && performanceData[module] 
+                    ? parseFloat(performanceData[module]) : 0;
+                
+                // Generate hyperbolic growth curve for this module
+                // Formula: y = a * (1 - e^(-bx)) where 'a' is the asymptote (target score)
+                // We'll use the actual score as the final target, with some reasonable progression
+                const targetScore = Math.max(actualScore, 20); // Minimum 20 for visualization
+                const growthData = [];
+                
+                for (let i = 0; i < timePoints; i++) {
+                    // Hyperbolic growth: starts slow, accelerates, then levels off
+                    const x = (i + 1) / timePoints; // Normalize to 0-1
+                    const growthFactor = 1 - Math.exp(-3 * x); // Hyperbolic curve
+                    const score = Math.round(targetScore * growthFactor);
+                    growthData.push(Math.min(score, 100));
+                }
+                
+                // Ensure the last point matches the actual score if available
+                if (actualScore > 0) {
+                    growthData[timePoints - 1] = actualScore;
+                }
+
+                datasets.push({
+                    label: module,
+                    data: growthData,
                     fill: false,
-                    borderColor: '#2563eb',
-                    backgroundColor: 'rgba(37,99,235,0.15)',
-                    tension: 0.5,
-                    pointBackgroundColor: '#2563eb',
+                    borderColor: moduleColors[module].border,
+                    backgroundColor: moduleColors[module].bg,
+                    tension: 0.4, // Smooth curves
+                    pointBackgroundColor: moduleColors[module].border,
                     pointBorderColor: '#fff',
-                    pointRadius: 6,
-                    pointHoverRadius: 9,
-                    borderWidth: 3
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        display: false
+                    pointRadius: 4,
+                    pointHoverRadius: 6,
+                    borderWidth: 3,
+                    pointBorderWidth: 2
+                });
+            });
+
+            // Destroy existing chart if it exists
+            if (window.performanceChart && typeof window.performanceChart.destroy === 'function') {
+                window.performanceChart.destroy();
+            }
+
+            // Create new chart with all modules
+            window.performanceChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: datasets
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    layout: {
+                        padding: {
+                            top: 10,
+                            bottom: 10
+                        }
                     },
-                    tooltip: {
-                        callbacks: {
-                            label: function(context) {
-                                return `Score: ${context.parsed.y}%`;
+                    plugins: {
+                        legend: {
+                            display: true,
+                            position: 'top',
+                            labels: {
+                                usePointStyle: true,
+                                padding: 15,
+                                font: {
+                                    size: 12,
+                                    weight: '500'
+                                }
+                            }
+                        },
+                        tooltip: {
+                            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                            titleColor: '#fff',
+                            bodyColor: '#fff',
+                            cornerRadius: 6,
+                            multiKeyBackground: 'transparent',
+                            callbacks: {
+                                title: function(context) {
+                                    return `Progress: ${context[0].label}`;
+                                },
+                                label: function(context) {
+                                    return `${context.dataset.label}: ${context.parsed.y}%`;
+                                }
                             }
                         }
-                    }
-                },
-                scales: {
-                    y: {
-                        beginAtZero: true,
-                        max: 100,
-                        title: {
-                            display: true,
-                            text: 'Score (%)',
-                            color: '#2563eb',
-                            font: { size: 14, weight: 'bold' }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: 100,
+                            title: {
+                                display: true,
+                                text: 'Proficiency Score (%)',
+                                color: '#374151',
+                                font: { size: 14, weight: '600' }
+                            },
+                            ticks: {
+                                color: '#6b7280',
+                                font: { size: 12 },
+                                callback: function(value) {
+                                    return value + '%';
+                                }
+                            },
+                            grid: {
+                                color: 'rgba(0,0,0,0.05)',
+                                drawBorder: false
+                            }
                         },
-                        ticks: {
-                            color: '#6b7280',
-                            font: { size: 12 }
-                        },
-                        grid: {
-                            color: 'rgba(0,0,0,0.07)'
+                        x: {
+                            title: {
+                                display: true,
+                                text: 'Learning Progression',
+                                color: '#374151',
+                                font: { size: 14, weight: '600' }
+                            },
+                            ticks: {
+                                color: '#6b7280',
+                                font: { size: 12 }
+                            },
+                            grid: {
+                                display: false
+                            }
                         }
                     },
-                    x: {
-                        title: {
-                            display: true,
-                            text: 'Weeks',
-                            color: '#2563eb',
-                            font: { size: 14, weight: 'bold' }
-                        },
-                        ticks: {
-                            color: '#6b7280',
-                            font: { size: 12 }
-                        },
-                        grid: {
-                            display: false
-                        }
+                    animation: {
+                        duration: 2000,
+                        easing: 'easeInOutQuart'
+                    },
+                    interaction: {
+                        intersect: false,
+                        mode: 'index'
                     }
-                },
-                animation: {
-                    duration: 1200,
-                    easing: 'easeInOutQuart'
                 }
+            });
+
+            console.log('All modules hyperbolic growth chart rendered successfully');
+            
+        } catch (error) {
+            console.error('Error rendering performance chart:', error);
+            const container = document.getElementById('performanceChartContainer');
+            if (container) {
+                container.innerHTML = `
+                    <h3 style="margin-bottom:1rem;"><i class="fas fa-chart-line"></i> All Modules Growth Chart</h3>
+                    <div class="error-message" style="padding: 2rem; text-align: center; background: #fee2e2; border-radius: 8px; color: #dc2626;">
+                        <i class="fas fa-exclamation-triangle" style="margin-right: 0.5rem;"></i>
+                        Unable to load performance chart. Please try refreshing the page.
+                    </div>
+                `;
             }
-        });
+        }
     }
 
     // Navigation Functions
@@ -455,9 +541,8 @@ document.addEventListener('DOMContentLoaded', function() {
         document.querySelectorAll('.dashboard-view').forEach(view => view.classList.remove('active'));
         document.getElementById('individualDashboard').classList.add('active');
         
-        if (currentStudentId) {
-            displayStudentDashboard(currentStudentId);
-        }
+        // Removed automatic call to displayStudentDashboard to prevent infinite loop
+        // The dashboard will be displayed when a student is explicitly clicked
     };
 
     window.showComprehensiveView = function() {
