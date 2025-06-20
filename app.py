@@ -214,153 +214,38 @@ def fetch_and_process_sheet_data_from_sheet():
 def init_db():
     with app.app_context():
         db.create_all() # Create tables if they don't exist
-        if not Student.query.first(): # Only load data if the database is empty
-            print("Database is empty. Attempting to fetch and load data from Google Sheet...")
-            sheet_data = fetch_and_process_sheet_data_from_sheet() # Use a new function to fetch from sheet specifically
-            if sheet_data:
-                for student_data in sheet_data:
-                    new_student = Student(
-                        id=student_data["id"],
-                        name=student_data["name"],
-                        average_score=student_data["metrics"]["average_score"],
-                        highest_score=student_data["metrics"]["highest_score"],
-                        lowest_score=student_data["metrics"]["lowest_score"],
-                        total_tasks=student_data["metrics"]["total_tasks"],
-                        performance_level=student_data["metrics"]["performance_level"],
-                        trend=student_data["metrics"]["trend"],
-                        completion_rate=student_data["metrics"]["completion_rate"],
-                        current_status=student_data["metrics"]["current_status"],
-                        performance_json=json.dumps(student_data["performance"])
-                    )
-                    db.session.add(new_student)
-                db.session.commit()
-                print(f"Successfully loaded {len(sheet_data)} students from Google Sheet into the database.")
-            else:
-                print("No data fetched from Google Sheet. Database remains empty.")
+        refresh_data_from_sheets()
+
+def refresh_data_from_sheets():
+    """Always refresh data from Google Sheets, clearing existing database data."""
+    with app.app_context():
+        print("Refreshing data from Google Sheets...")
+        # Clear existing data
+        Student.query.delete()
+        db.session.commit()
+        
+        sheet_data = fetch_and_process_sheet_data_from_sheet()
+        if sheet_data:
+            for student_data in sheet_data:
+                new_student = Student(
+                    id=student_data["id"],
+                    name=student_data["name"],
+                    average_score=student_data["metrics"]["average_score"],
+                    highest_score=student_data["metrics"]["highest_score"],
+                    lowest_score=student_data["metrics"]["lowest_score"],
+                    total_tasks=student_data["metrics"]["total_tasks"],
+                    performance_level=student_data["metrics"]["performance_level"],
+                    trend=student_data["metrics"]["trend"],
+                    completion_rate=student_data["metrics"]["completion_rate"],
+                    current_status=student_data["metrics"]["current_status"],
+                    performance_json=json.dumps(student_data["performance"])
+                )
+                db.session.add(new_student)
+            db.session.commit()
+            print(f"Successfully refreshed {len(sheet_data)} students from Google Sheet.")
         else:
-            print("Database already contains data. Skipping Google Sheet data load.")
+            print("No data fetched from Google Sheet. Database remains empty.")
 
-# Rename original fetch_and_process_sheet_data to avoid recursion and clarify intent
-def fetch_and_process_sheet_data_from_sheet():
-    global TASKS
-    students_data = []
-    service = get_sheets_service()
-    range_name = f'{SHEET_NAME}!A:Q'
-
-    try:
-        result = service.spreadsheets().values().get(
-            spreadsheetId=SPREADSHEET_ID,
-            range=range_name
-        ).execute()
-        values = result.get('values', [])
-
-        if not values or len(values) < 2: # Ensure at least two rows for headers + some data
-            print("No data or insufficient header rows found in Google Sheet.")
-            return []
-
-        header_row1 = values[0]
-        header_row2 = values[1]
-        
-        # Define fixed column indices based on the provided sheet structure
-        user_id_col = 0 # Column A
-        name_col = 1    # Column B
-        current_status_col = 10 # Assuming 'Current Status' is in Column K (index 10)
-        
-        # Map task names to their fixed column indices (from first header row)
-        task_indices_map = {
-            "Spreadsheet": 4, # Column E
-            "SQL": 5,         # Column F
-            "Power BI": 6,    # Column G
-            "Python": 7,      # Column H
-            "EDA": 8,         # Column I
-            "ML": 9           # Column J
-        }
-
-        TASKS.clear() # Clear existing tasks, populate anew
-        # Populate TASKS list from the keys of our fixed map
-        for task_name in task_indices_map.keys():
-            TASKS.append(task_name)
-
-        if user_id_col >= len(header_row2) or name_col >= len(header_row2) or not TASKS or current_status_col >= len(header_row2):
-            raise ValueError("Missing essential columns (User Id, Name, Current Status, or Task columns) based on fixed indices.")
-
-        for row in values[2:]: # Start processing data from the third row (index 2)
-            if not row or user_id_col >= len(row) or name_col >= len(row) or not row[user_id_col] or not row[name_col]:
-                continue # Skip empty or incomplete rows
-
-            student_id = str(row[user_id_col]).replace(',', '').strip()
-            name = str(row[name_col]).strip()
-            
-            # Extract current status
-            current_status = str(row[current_status_col]).strip() if current_status_col < len(row) else "N/A"
-            
-            performance = {}
-            for task_name in TASKS:
-                task_col_index = task_indices_map.get(task_name)
-                if task_col_index is not None and task_col_index < len(row):
-                    score_str = str(row[task_col_index]).strip()
-                    if score_str in ['#N/A', ''] or not score_str.replace('.', '').replace('-', '').isdigit(): # Check for valid number, allow '-' for negative if applicable
-                        score = 0.0 # Treat N/A, empty or non-numeric as 0
-                    else:
-                        score = float(score_str)
-                else:
-                    score = 0.0 # Task column not found or out of bounds for this row
-                performance[task_name] = score
-            
-            scores = [s for s in performance.values() if s > 0]
-            avg_score = sum(scores) / len(scores) if scores else 0
-            highest_score = max(scores) if scores else 0
-            lowest_score = min(scores) if scores else 0
-            
-            if avg_score >= 90:
-                level = "Excellent"
-            elif avg_score >= 80:
-                level = "Good"
-            elif avg_score >= 70:
-                level = "Satisfactory"
-            elif avg_score >= 60:
-                level = "Needs Improvement"
-            else:
-                level = "Poor"
-            
-            if len(scores) >= 3:
-                recent_avg = sum(scores[-3:]) / 3
-                earlier_scores_for_trend = scores[:-3]
-                earlier_avg = sum(earlier_scores_for_trend) / len(earlier_scores_for_trend) if earlier_scores_for_trend else recent_avg
-
-                if recent_avg > earlier_avg + 5:
-                    trend = "Improving"
-                elif recent_avg < earlier_avg - 5:
-                    trend = "Declining"
-                else:
-                    trend = "Stable"
-            else:
-                trend = "Insufficient Data"
-            
-            student = {
-                "id": student_id,
-                "name": name,
-                "performance": performance,
-                "metrics": {
-                    "average_score": round(avg_score, 1),
-                    "highest_score": round(highest_score, 1),
-                    "lowest_score": round(lowest_score, 1),
-                    "total_tasks": len([s for s in performance.values() if s > 0]),
-                    "performance_level": level,
-                    "trend": trend,
-                    "completion_rate": round(len([s for s in performance.values() if s > 0]) / len(TASKS) * 100, 1) if TASKS else 0,
-                    "current_status": current_status # Add current status to metrics
-                }
-            }
-            students_data.append(student)
-    except HttpError as err:
-        print(f"Google Sheets API error: {err}")
-        return []
-    except Exception as e:
-        print(f"Error processing Google Sheet data: {e}")
-        return []
-    
-    return students_data
 
 # Initialize STUDENT_DATA at startup (now from DB)
 # STUDENT_DATA = fetch_and_process_sheet_data()
